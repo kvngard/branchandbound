@@ -305,78 +305,10 @@ namespace TSP
             double[,] matrix = new double[Cities.Length, Cities.Length];
 
             for (int src = 0; src < Cities.Length; src++)
-            {
-                int minRowIndex = 0;
                 for (int dst = 0; dst < Cities.Length; dst++)
-                {
-                    //Check the distance to a particular city.
-                    double distance = Cities[src].costToGetTo(Cities[dst]);
-                    matrix[src, dst] = distance;
+                    matrix[src, dst] = Cities[src].costToGetTo(Cities[dst]);
 
-                    //Check if this value is the min for the row.
-                    if (distance < matrix[src, minRowIndex])
-                        minRowIndex = dst;
-
-                    //Get the min distance value for the current column.
-                    double minColDistance = matrix[(int)matrix[Cities.Length, dst], dst];
-                    if (distance < minColDistance)
-                    {
-                        //Set the last column value to the index of the min.
-                        matrix[Cities.Length, dst] = src;
-                    }
-                }
-                //Set the last row value to the index of the row min.
-                matrix[src, Cities.Length] = minRowIndex;
-            }
             return matrix;
-        }
-
-        /// <summary>
-        /// Reduces the matrix and sets the lower bound for the state.
-        /// </summary>
-        /// <returns>double[,]</returns>
-        private double reduceCostMatrix(ref double[,] matrix)
-        {
-            double lowerBound = 0;
-            //Reduce Rows
-            for (int row = 0; row < Cities.Length; row++)
-            {
-                double rowMin = matrix[row, (int)matrix[row, Cities.Length]];
-                if (rowMin == double.PositiveInfinity || rowMin == 0)
-                    continue;
-
-                for (int col = 0; col < Cities.Length; col++)
-                {
-                    matrix[row, col] -= rowMin;
-                    
-                    //Check and change the column min index as needed.
-                    if (matrix[row, col] < matrix[(int)matrix[Cities.Length, col], col])
-                        matrix[Cities.Length, col] = row;
-                }
-
-                lowerBound += rowMin;
-            }
-
-            //Reduce Columns
-            for (int col = 0; col < Cities.Length; col++)
-            {
-                //Check if the column has already been reduced.
-                if (matrix[0, (int)matrix[Cities.Length, col]] == 0)
-                    continue;
-
-                double colMin = matrix[(int)matrix[Cities.Length, col], col];
-                if (colMin == double.PositiveInfinity || colMin == 0)
-                    continue;
-
-                for (int row = 0; row < Cities.Length; row++)
-                {
-                    matrix[row, col] -= colMin;
-                }
-
-                lowerBound += colMin;
-            }
-
-            return lowerBound;
         }
 
         /// <summary>
@@ -386,12 +318,81 @@ namespace TSP
         /// <returns></returns>
         public void branchAndBoundSolution()
         {
-            double[,] initialMatrix = generateCostMatrix();
-            double lowerBound = reduceCostMatrix(ref initialMatrix);
-   
-            State initial = new State(initialMatrix, lowerBound);
+            int totalStatesPruned = 0, totalStatesCreated = 0, bssfUpdates = 0, maxStoredStates = 0;
             State.totalCities = Cities.Length;
+            bool bssfUpdated = false;
 
+            greedySolution(true);
+
+            double[,] initialMatrix = generateCostMatrix();
+
+            PriorityQueue<State> states = new PriorityQueue<State>();
+
+            State initial = new State(initialMatrix);
+            states.Enqueue(initial, initial.lowerBound);
+            totalStatesCreated++;
+            maxStoredStates++;
+
+            Stopwatch timer = new Stopwatch();
+            timer.Start();
+
+            State current = null;
+            while (states.Count > 0)
+            {
+                if (timer.ElapsedMilliseconds > 30000)
+                    break;
+
+                current = states.Dequeue();
+
+                if (current.lowerBound > bssf.costOfRoute())
+                {
+                    totalStatesPruned++;
+                    continue;
+                }
+
+                if (current.isValidSolution())
+                {
+                    bssf = new TSPSolution(current.getRoute(ref Cities));
+                    bssfUpdated = true;
+                    continue;
+                }
+
+                Tuple<State, State> successors = current.expandSuccessors();
+                if (successors == null)
+                    continue;
+
+                State include = successors.Item1;
+                State exclude = successors.Item2;
+                totalStatesCreated += 2;
+
+                if (include.lowerBound > costOfBssf())
+                    totalStatesPruned++;
+                else
+                {
+                    states.Enqueue(include, include.lowerBound);
+                    if (states.Count > maxStoredStates)
+                        maxStoredStates = states.Count;
+                }
+
+                if (exclude.lowerBound > costOfBssf())
+                    totalStatesPruned++;
+                else
+                {
+                    states.Enqueue(exclude, exclude.lowerBound);
+                    if (states.Count > maxStoredStates)
+                        maxStoredStates = states.Count;
+                }
+            }
+
+            timer.Stop();
+            bssf = new TSPSolution(Route);
+            string msg = "STATS:";
+            msg += " Created: " + totalStatesCreated;
+            msg += " Pruned: " + totalStatesPruned;
+            msg += " Stored: " + maxStoredStates;
+            Program.MainForm.tourInfo.Text = msg;
+            updateForm(timer);
+            return;
         }
 
         /// <summary>
@@ -459,7 +460,7 @@ namespace TSP
             return sortedEdges;
         }
 
-        public void greedySolution()
+        public void greedySolution(bool usingForBssf = false)
         {
             bool valid = false;
             Random r = new Random();
@@ -497,7 +498,8 @@ namespace TSP
             }
             timer.Stop();
             
-            updateForm(timer);
+            if(!usingForBssf)
+                updateForm(timer);
             return;
         }
 
